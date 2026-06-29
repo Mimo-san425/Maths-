@@ -3,394 +3,806 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1" />
-<title>cm ⇄ mm 変換（タイマー＋毎回ランダム）</title>
+<title>アナログ時計（相対ドラッグ・ロック・右側デジタル／かな表示・常時時間設定・はん対応）</title>
 <style>
-  :root { --b:#222; --g:#666; --bg:#fafafa; --card:#fff; --line:#ddd; }
-  body{ margin:0; font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif; color:var(--b); background:var(--bg); }
-  header{ padding:16px 18px; background:#fff; border-bottom:1px solid var(--line); }
-  h1{ margin:0 0 6px; font-size:20px; }
-  .sub{ color:var(--g); font-size:13px; }
-  .wrap{ max-width:980px; margin:0 auto; padding:14px; }
-  .tools{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:12px 0 10px; }
-  button{ cursor:pointer; border:1px solid var(--line); background:#fff; padding:10px 12px; border-radius:10px; font-size:14px; }
-  button:hover{ background:#f5f5f5; }
-  button:disabled{ opacity:.45; cursor:not-allowed; }
-  .pill{ border:1px dashed var(--line); padding:8px 10px; border-radius:12px; background:#fff; font-size:14px; }
-  .card{ background:var(--card); border:1px solid var(--line); border-radius:14px; padding:14px; }
-  .note{ margin:0 0 10px; color:var(--g); font-size:13px; }
-  table{ width:100%; border-collapse:collapse; }
-  td{ padding:10px 6px; border-top:1px solid var(--line); vertical-align:middle; font-size:16px; }
-  .q{ display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  input[type="text"]{
-    width:110px; padding:10px 12px; border:1px solid var(--line); border-radius:12px; font-size:18px;
-  }
-  .unit{ color:var(--g); }
-  .mark{ min-width:44px; text-align:center; font-weight:800; font-size:18px; }
-  .ok{ color:#0a7b34; }
-  .ng{ color:#b00020; }
+  :root {
+    --hour-hand-color: #e53935;   /* 短針：赤 */
+    --minute-hand-color: #1e63ff; /* 長針：青 */
 
-  .statusbar{
-    display:flex; flex-wrap:wrap; gap:10px; align-items:center;
-    background:#fff; border:1px solid var(--line); border-radius:14px; padding:10px 12px;
-  }
-  .timer{ font-weight:900; font-size:20px; }
-  .timer.running{ color:#b00020; }
-  .resultBox{
-    display:none;
-    margin-top:10px;
-    background:#fff; border:1px solid var(--line); border-radius:14px; padding:12px;
-  }
-  .resultBox.show{ display:block; }
-  .small{ font-size:12px; color:var(--g); }
-  .namebox{ display:flex; gap:10px; flex-wrap:wrap; align-items:center; margin-bottom:10px; }
-  .namebox input{ width:220px; }
+    --hour-hand-width: 16;
+    --minute-hand-width: 12;
 
-  .locked input.answer{ background:#f1f1f1; }
+    --hour-hand-length: 0.56;  /* 文字盤半径比 */
+    --minute-hand-length: 0.78;
+    --tail-length: 0.14;       /* 根本側伸び（描画のみ／ヒット判定には含めない） */
 
-  @media print{
-    header, .tools, .statusbar, .resultBox{ display:none !important; }
-    body{ background:#fff; }
-    .wrap{ max-width:none; padding:0; }
-    .card{ border:1px solid #000; border-radius:0; }
-    input{ border:1px solid #000; }
+    --face-bg: #fafafa;
+    --face-stroke: #dddddd;
+    --tick-color: #222;
+    --minor-tick-color: #777;
+    --center-cap-color: #111;
+    --number-color: #111;
+
+    --font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial,
+                   "Noto Sans JP", "Hiragino Sans", "Yu Gothic", "Meiryo", sans-serif;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --face-bg: #111416;
+      --face-stroke: #2a2f33;
+      --tick-color: #e8e8e8;
+      --minor-tick-color: #b7b7b7;
+      --center-cap-color: #e8e8e8;
+      --number-color: #e8e8e8;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0;
+    background: radial-gradient(1200px 1200px at 50% 50%, rgba(0,0,0,0.06), transparent 40%), var(--face-bg);
+    font-family: var(--font-family);
+    display: grid;
+    place-items: center;
+  }
+
+  /* 左にアナログ、右に表示パネル */
+  .layout {
+    width: min(96vw, 1100px);
+    display: grid;
+    grid-template-columns: 1fr minmax(360px, 46%); /* 右側を広く（改行防止） */
+    gap: 16px;
+    align-items: center;
+    padding: 16px;
+  }
+  @media (max-width: 740px) {
+    .layout { grid-template-columns: 1fr; }
+    .right { order: 2; }
+  }
+
+  .left {
+    display: grid;
+    grid-template-rows: auto auto auto;
+    gap: 12px;
+    justify-items: center;
+  }
+
+  .clock-wrap {
+    width: min(92vmin, 560px);
+    aspect-ratio: 1 / 1;
+  }
+  @supports not (aspect-ratio: 1 / 1) {
+    .clock-wrap { position: relative; }
+    .clock-wrap::before { content:""; display:block; padding-top:100%; }
+    canvas { position:absolute; inset:0; }
+  }
+  canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    border-radius: 50%;
+    background: transparent;
+    touch-action: none; /* タッチでスクロールしない */
+  }
+
+  /* ===== 上段ボタン列 ===== */
+  .controls {
+    width: min(92vmin, 560px);
+    display: grid;
+    /* ロック×2 + デジタル + かな + はんチェック ＝ 5要素 */
+    grid-template-columns: repeat(5, minmax(max-content, 1fr));
+    gap: .5rem;
+    align-items: center;
+  }
+  .controls button {
+    padding: .75rem .6rem;
+    font-size: 15px;
+    border-radius: 10px;
+    border: 1px solid #cfd8dc;
+    background: #fff;
+    color: #222;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+    cursor: pointer;
+    transition: transform .02s ease, background .2s ease, color .2s ease;
+    white-space: nowrap;          /* ← ボタン内改行禁止 */
+  }
+  #btnDigital { min-width: calc(12ch + 2ch); } /* “表示：ON/OFF”が折返されないように */
+  #btnKana    { min-width: calc(16ch + 2ch); }
+  .controls button:active { transform: translateY(1px); }
+  .controls button.is-on { background:#0d47a1; color:#fff; border-color:#0d47a1; }
+  .controls button.lock-hour.is-on { background:#b71c1c; border-color:#b71c1c; }
+  .controls button.lock-minute.is-on { background:#0b51ff; border-color:#0b51ff; }
+
+  /* はんチェック（ラベルごとボタン風で改行禁止） */
+  .han-check {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    padding: .75rem .6rem;
+    font-size: 15px;
+    border-radius: 10px;
+    border: 1px solid #cfd8dc;
+    background: #fff;
+    color: #222;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  .han-check input {
+    accent-color: #0d47a1;
+    transform: scale(1.1);
+  }
+
+  .hint {
+    grid-column: 1 / -1;
+    text-align: center;
+    color: #666;
+    font-size: 0.92rem;
+    padding-top: 2px;
+    user-select: none;
+  }
+
+  /* ===== 常時表示の「時間設定」行 ===== */
+  .time-set {
+    width: min(92vmin, 560px);
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr)); /* 時・分・一瞬・アニメ */
+    gap: .5rem;
+    align-items: end;
+  }
+  .time-set .field {
+    display: grid;
+    grid-template-rows: auto auto;
+    gap: 6px;
+  }
+  .time-set label {
+    font-size: 13px;
+    color: #444;
+  }
+  .time-set input[type="number"] {
+    width: 100%;
+    font-size: 16px;
+    padding: .5rem .6rem;
+    border: 1px solid #cfd8dc;
+    border-radius: 8px;
+    background: #fff;
+    color: #111;
+  }
+  .time-set button {
+    padding: .75rem .6rem;
+    font-size: 15px;
+    border-radius: 10px;
+    border: 1px solid #cfd8dc;
+    background: #fff;
+    color: #222;
+    box-shadow: 0 1px 2px rgba(0,0,0,.06);
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .time-set button.primary { background:#0d47a1; color:#fff; border-color:#0d47a1; }
+  @media (prefers-color-scheme: dark) {
+    .time-set input[type="number"] { background:#0f1317; color:#e8e8e8; border-color:#2a2f33; }
+    .time-set button { background:#1a2229; color:#e8e8e8; border-color:#2a2f33; }
+    .time-set button.primary { background:#0b51ff; border-color:#0b51ff; }
+  }
+
+  /* ===== 右側パネル（上：かな、下：デジタル） ===== */
+  .right { display: grid; place-items: center; }
+
+  .digital-panel {
+    width: 100%;
+    border-radius: 14px;
+    border: 1px solid #cfd8dc;
+    background: #fff;
+    color: #111;
+    box-shadow: 0 1px 3px rgba(0,0,0,.06);
+    padding: clamp(12px, 2vmin, 20px);
+    text-align: center;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 1px;
+    font-size: clamp(40px, 12vmin, 160px);
+    line-height: 1;
+    display: none; /* OFFのとき非表示 */
+    margin-bottom: 10px;
+    /* ← 二桁でも改行させない */
+    white-space: nowrap;
+    word-break: keep-all;
+    overflow-wrap: normal;
+  }
+  .digital-panel.is-visible { display: block; }
+  .kana-panel { }
+
+  @media (prefers-color-scheme: dark) {
+    .digital-panel {
+      background:#12161a; color:#e8e8e8; border-color:#2a2f33;
+    }
   }
 </style>
 </head>
 <body>
-<header>
-  <h1>cm ⇄ mm 変換（タイマー＋毎回ランダム）</h1>
-  <div class="sub">スタートすると問題が自動で作られます。時間終了で自動採点＆正解率表示。</div>
-</header>
+  <main class="layout">
+    <section class="left">
+      <div class="clock-wrap">
+        <canvas id="clock" aria-label="アナログ時計（相対ドラッグ・ロック）"></canvas>
+      </div>
 
-<div class="wrap" id="app">
+      <!-- 上段ボタン列 -->
+      <div class="controls">
+        <button id="btnHourLock" class="lock-hour" type="button" aria-pressed="false">🔓 短針ロック</button>
+        <button id="btnMinuteLock" class="lock-minute" type="button" aria-pressed="false">🔓 長針ロック</button>
+        <button id="btnDigital" class="digital-toggle" type="button" aria-pressed="false">デジタル表示：OFF</button>
+        <button id="btnKana" class="kana-toggle" type="button" aria-pressed="false">〇じ〇ふん表示：OFF</button>
+        <!-- 新規：はんチェック -->
+        <label id="lblHan" class="han-check" for="chkHan">
+          <input id="chkHan" type="checkbox" />
+          〇じはん表記にする
+        </label>
 
-  <div class="statusbar" role="status" aria-live="polite">
-    <span class="pill">モード：
-      <label><input type="radio" name="mode" value="30" checked> 30秒</label>
-      <label style="margin-left:10px;"><input type="radio" name="mode" value="60"> 60秒</label>
-    </span>
-    <span class="pill">のこり： <span id="timer" class="timer">—</span></span>
-    <button id="startBtn">スタート</button>
-    <button id="stopBtn" disabled>中断（採点）</button>
-    <button id="newBtn">問題を作り直す</button>
-    <span class="pill small">Enterで次へ</span>
-  </div>
+        <div class="hint">
+          針そのものをドラッグして動かせます（相対ドラッグなのでタッチ直後は飛びません）。短針ロック中は長針に追従しますが「時」は変わりません（59→0で短針は元の時間位置へ戻る）。
+        </div>
+      </div>
 
-  <div id="resultBox" class="resultBox">
-    <div><b>結果</b></div>
-    <div style="margin-top:6px; line-height:1.9;">
-      正解：<b><span id="rCorrect">0</span></b> 問　
-      ／ 解答：<b><span id="rAttempted">0</span></b> 問　
-      ／ 全問題：<b><span id="rTotal">0</span></b> 問
-      <br>
-      正解率（解答した中）：<b><span id="rAccAttempted">0</span>%</b>
-      <br>
-      正解率（全問題中）：<b><span id="rAccTotal">0</span>%</b>
-    </div>
-    <div class="small" style="margin-top:6px;">
-      ※空らんは「解答した中」には数えません。<br>
-      ※「全問題中」は空らんも×として扱います（速さチャレンジ向け）。
-    </div>
-  </div>
+      <!-- 常時表示：時間設定（時は 1–12） -->
+      <div class="time-set" aria-label="時間設定（常時表示）">
+        <div class="field">
+          <label for="inpHour">時（1–12）</label>
+          <input id="inpHour" type="number" min="1" max="12" step="1">
+        </div>
+        <div class="field">
+          <label for="inpMinute">分（0–59）</label>
+          <input id="inpMinute" type="number" min="0" max="59" step="1">
+        </div>
+        <button id="btnSetInstant" class="primary" type="button">一瞬で設定</button>
+        <button id="btnSetAnimated" class="primary" type="button">アニメで設定</button>
+      </div>
+    </section>
 
-  <section class="card" style="margin-top:12px;">
-    <div class="note">
-      ルール：<b>1cm＝10mm</b>（cm→mm は×10、mm→cm は÷10）
-    </div>
-    <table>
-      <tbody id="tbody"></tbody>
-    </table>
-    <div class="pill" style="margin-top:12px;">
-      （手動採点の表示）正解：<span id="score">—</span>
-      <span class="small">※時間終了時は自動で結果が出ます</span>
-    </div>
-  </section>
-
-  <div class="tools">
-    <button id="checkBtn">手動で答え合わせ（○×）</button>
-    <button id="resetBtn">リセット</button>
-    <button onclick="window.print()">印刷</button>
-    <span class="pill small">問題数は下の設定で増やせます</span>
-  </div>
-</div>
+    <aside class="right">
+      <!-- 上：〇じ〇ふん（ON時に表示。0分は「〇じ」のみ／30分は「はん」切替対応） -->
+      <div id="kanaPanel" class="digital-panel kana-panel" aria-live="polite" aria-atomic="true">--じ</div>
+      <!-- 下：デジタル -->
+      <div id="digitalPanel" class="digital-panel" aria-live="polite" aria-atomic="true">--:--</div>
+    </aside>
+  </main>
 
 <script>
 (() => {
-  const app = document.getElementById('app');
-  const tbody = document.getElementById('tbody');
-  const scoreEl = document.getElementById('score');
+  const canvas = document.getElementById('clock');
+  const ctx = canvas.getContext('2d', { alpha: false }); // 不透明キャンバス（毎回全面塗りで黒残り回避）
 
-  const resultBox = document.getElementById('resultBox');
-  const rCorrect = document.getElementById('rCorrect');
-  const rAttempted = document.getElementById('rAttempted');
-  const rTotal = document.getElementById('rTotal');
-  const rAccAttempted = document.getElementById('rAccAttempted');
-  const rAccTotal = document.getElementById('rAccTotal');
+  // UI要素
+  const btnHourLock = document.getElementById('btnHourLock');
+  const btnMinuteLock = document.getElementById('btnMinuteLock');
+  const btnDigital   = document.getElementById('btnDigital');
+  const btnKana      = document.getElementById('btnKana');
+  const digitalPanel = document.getElementById('digitalPanel');
+  const kanaPanel    = document.getElementById('kanaPanel');
+  const chkHan       = document.getElementById('chkHan');
 
-  const timerEl = document.getElementById('timer');
-  const startBtn = document.getElementById('startBtn');
-  const stopBtn = document.getElementById('stopBtn');
-  const newBtn = document.getElementById('newBtn');
+  // 常時 時間設定
+  const inpHour        = document.getElementById('inpHour');
+  const inpMinute      = document.getElementById('inpMinute');
+  const btnSetInstant  = document.getElementById('btnSetInstant');
+  const btnSetAnimated = document.getElementById('btnSetAnimated');
 
-  // ======= 設定（ここをいじると難易度調整できます） =======
-  const NUM_QUESTIONS = 24;  // 30秒なら24前後が目安（増減OK）
-  const RATIO_CM_TO_MM = 0.55; // この割合で cm→mm を増やす（残りは mm→cm）
-  const CM_MIN = 1;
-  const CM_MAX = 30;         // cm→mm の cm 範囲（答えは10〜300mm）
-  const MM_MIN = 10;
-  const MM_MAX = 300;        // mm→cm の mm 範囲（10の倍数にする）
-  // ========================================================
-
-  let inputs = [];
-  let tickId = null;
-  let endAt = null;
-  let running = false;
-
-  const normalizeNumber = (s) => {
-    if (s == null) return "";
-    // 全角数字 → 半角、空白除去
-    const z2h = s.replace(/[０-９]/g, ch => String.fromCharCode(ch.charCodeAt(0) - 0xFEE0));
-    return z2h.trim();
+  // ====== 状態（内部の時は 0..11） ======
+  const now = new Date();
+  const state = {
+    hour: now.getHours() % 12, // 0..11
+    minute: now.getMinutes(),  // 0..59
+    hourLocked: false,
+    minuteLocked: false,
+    showDigital: false,
+    showKana: false,
+    useHan: false              // ★ 30分を「はん」にするか（デフォルトOFF）
   };
 
-  const randInt = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+  // 相対ドラッグ
+  let activeHand = null; // 'hour' | 'minute' | null
+  let dragging = false;
+  let grabAngle = 0;     // 掴んだ角度（Clock角：12時=0）
+  let handAngle0 = 0;    // 掴んだ時点の針角（Clock角）
+  let angleOffset = 0;   // handAngle0 - grabAngle（Clock角同士）
+  let DPR = 1;
 
-  const shuffle = (arr) => {
-    for (let i = arr.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
-      [arr[i], arr[j]] = [arr[j], arr[i]];
+  // アニメーション（時間設定で使用）
+  let anim = {
+    active: false,
+    startTotal: 0,   // 分単位（0..720）
+    endTotal: 0,     // 分単位（0..720）
+    startTs: 0,
+    duration: 900,   // ms（差分で上書き）
+    hourFloat: null,   // 0..12 の実数（h）
+    minuteFloat: null  // 0..60 の実数（m）
+  };
+
+  // CSS util
+  const cssVal = (name, fb) => {
+    const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+    return v || fb;
+  };
+  const cssNum = (name, fb) => {
+    const v = parseFloat(getComputedStyle(document.documentElement).getPropertyValue(name));
+    return Number.isFinite(v) ? v : fb;
+  };
+
+  // 角度 util
+  const TAU = Math.PI * 2;
+  const normTau = (a) => ((a % TAU) + TAU) % TAU;   // -> [0,2π)
+  const shortest = (a) => { a = (a + Math.PI) % TAU; return a < 0 ? a + TAU - Math.PI : a - Math.PI; };
+
+  // 座標
+  function centerAndRadius() {
+    const rect = canvas.getBoundingClientRect();
+    const w = Math.max(1, rect.width), h = Math.max(1, rect.height);
+    const cx = w / 2, cy = h / 2;
+    const r = Math.min(w, h) / 2 * 0.94;
+    return { cx, cy, r, w, h };
+  }
+
+  // ====== Clock角／Draw角の分離 ======
+  // Clock角：12時=0、時計回り、[0, 2π)
+  const minuteAngleClock = () => {
+    const m = (anim.active && anim.minuteFloat != null) ? anim.minuteFloat : state.minute;
+    return normTau((m / 60) * TAU);
+  };
+  const hourAngleClock = () => {
+    const h = (anim.active && anim.hourFloat != null) ? anim.hourFloat : (state.hour + state.minute / 60);
+    return normTau((h / 12) * TAU);
+  };
+  // Draw角：右=0 → Clock角 - π/2
+  const minuteAngleDraw = () => minuteAngleClock() - Math.PI / 2;
+  const hourAngleDraw   = () => hourAngleClock()   - Math.PI / 2;
+
+  // DPR
+  function resizeCanvas() {
+    const rect = canvas.getBoundingClientRect();
+    DPR = Math.max(1, window.devicePixelRatio || 1);
+    canvas.width  = Math.max(1, Math.round(rect.width  * DPR));
+    canvas.height = Math.max(1, Math.round(rect.height * DPR));
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0); // 以降は CSS px で描く
+    draw();
+  }
+  window.addEventListener('resize', resizeCanvas, { passive: true });
+  requestAnimationFrame(resizeCanvas);
+
+  // ====== 表示フォーマット ======
+  const pad2 = (n) => String(n).padStart(2, '0');
+  function formatDigital(h0_11, m) {
+    const hourShown = (h0_11 % 12) === 0 ? 12 : (h0_11 % 12);
+    return `${pad2(hourShown)}:${pad2(m)}`;
+  }
+  // 「ふん／ぷん」ルール：1/3/4/6/8 と 10 の倍数 → ぷん、それ以外 → ふん
+  function minuteSuffix(m) {
+    if (m === 0) return 'ふん'; // 0分は formatKana 側で使わないが、他からの参照も考慮し残す
+    const last = m % 10;
+    if (last === 0 || last === 1 || last === 3 || last === 4 || last === 6 || last === 8) return 'ぷん';
+    return 'ふん';
+  }
+  // ★ 0分は「〇じ」のみ。30分は useHan に応じて「はん」or「30ぷん」
+  function formatKana(h0_11, m) {
+    const hourShown = (h0_11 % 12) === 0 ? 12 : (h0_11 % 12);
+    if (m === 0) return `${hourShown}じ`;
+    if (m === 30) {
+      return state.useHan ? `${hourShown}じはん` : `${hourShown}じ30ぷん`;
     }
-    return arr;
-  };
+    return `${hourShown}じ${m}${minuteSuffix(m)}`;
+  }
 
-  const clearMarks = () => {
-    Array.from(app.querySelectorAll('[data-mark]')).forEach(m => {
-      m.textContent = "";
-      m.classList.remove('ok','ng');
-    });
-    scoreEl.textContent = "—";
-  };
+  // ====== 描画 ======
+  function drawFace(cx, cy, r) {
+    // 盤面
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, TAU);
+    ctx.fillStyle = cssVal('--face-bg', '#fafafa');
+    ctx.fill();
+    ctx.lineWidth = Math.max(1, r * 0.015);
+    ctx.strokeStyle = cssVal('--face-stroke', '#ddd');
+    ctx.stroke();
+    ctx.restore();
 
-  const lockInputs = (locked) => {
-    if (locked) app.classList.add('locked');
-    else app.classList.remove('locked');
-    inputs.forEach(i => i.disabled = !!locked);
-  };
-
-  const setTimerText = (sec) => {
-    if (sec == null) { timerEl.textContent = "—"; return; }
-    timerEl.textContent = `${sec}s`;
-  };
-
-  const getModeSeconds = () => {
-    const v = document.querySelector('input[name="mode"]:checked')?.value || "30";
-    return parseInt(v, 10);
-  };
-
-  const hideResult = () => resultBox.classList.remove('show');
-
-  const showResult = (stats) => {
-    rCorrect.textContent = String(stats.correct);
-    rAttempted.textContent = String(stats.attempted);
-    rTotal.textContent = String(stats.total);
-    rAccAttempted.textContent = String(stats.accAttempted);
-    rAccTotal.textContent = String(stats.accTotal);
-    resultBox.classList.add('show');
-  };
-
-  const compute = () => {
-    clearMarks();
-
-    let correct = 0, attempted = 0;
-    const total = inputs.length;
-
-    inputs.forEach((inp) => {
-      const user = normalizeNumber(inp.value);
-      const ans  = normalizeNumber(inp.dataset.ans);
-      const mark = inp.closest('tr')?.querySelector('[data-mark]');
-
-      if (user === "") return;
-
-      attempted++;
-      const isOK = (user === ans);
-      if (isOK) correct++;
-
-      if (mark) {
-        mark.textContent = isOK ? "○" : "×";
-        mark.classList.add(isOK ? 'ok' : 'ng');
-      }
-    });
-
-    scoreEl.textContent = attempted === 0 ? "—" : `${correct} / ${attempted}`;
-
-    const accAttempted = attempted === 0 ? 0 : Math.round((correct / attempted) * 100);
-    const accTotal = total === 0 ? 0 : Math.round((correct / total) * 100);
-
-    return { correct, attempted, total, accAttempted, accTotal };
-  };
-
-  const finish = () => {
-    if (!running) return;
-    running = false;
-
-    if (tickId) clearInterval(tickId);
-    tickId = null;
-    endAt = null;
-
-    timerEl.classList.remove('running');
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
-
-    const stats = compute();
-    showResult(stats);
-    lockInputs(true);
-  };
-
-  const buildQuestions = () => {
-    // タイマー動作中は作り直し禁止（事故防止）
-    if (running) return;
-
-    hideResult();
-    clearMarks();
-
-    const qs = [];
-    const needCm = Math.round(NUM_QUESTIONS * RATIO_CM_TO_MM);
-    const needMm = NUM_QUESTIONS - needCm;
-
-    // 重複を減らすために「問題の文字列」でユニーク管理
-    const used = new Set();
-
-    // cm -> mm
-    while (qs.length < needCm) {
-      const cm = randInt(CM_MIN, CM_MAX);
-      const mm = cm * 10;
-      const key = `cm:${cm}`;
-      if (used.has(key)) continue;
-      used.add(key);
-
-      qs.push({
-        promptLeft: `${cm}`,
-        unitLeft: `cm`,
-        unitRight: `mm`,
-        ans: String(mm)
-      });
+    // 目盛
+    ctx.save();
+    ctx.lineCap = 'round';
+    for (let i = 0; i < 60; i++) {
+      const angle = TAU * (i / 60) - Math.PI / 2;
+      const isHour = i % 5 === 0;
+      const inner = isHour ? r * 0.80 : r * 0.88;
+      const outer = r * 0.96;
+      ctx.beginPath();
+      ctx.lineWidth = isHour ? Math.max(2, r * 0.022) : Math.max(1, r * 0.010);
+      ctx.strokeStyle = isHour ? cssVal('--tick-color', '#222') : cssVal('--minor-tick-color', '#777');
+      ctx.moveTo(cx + inner * Math.cos(angle), cy + inner * Math.sin(angle));
+      ctx.lineTo(cx + outer * Math.cos(angle), cy + outer * Math.sin(angle));
+      ctx.stroke();
     }
+    ctx.restore();
 
-    // mm -> cm（10の倍数）
-    while (qs.length < NUM_QUESTIONS) {
-      const mm = randInt(MM_MIN/10, MM_MAX/10) * 10;
-      const cm = mm / 10;
-      const key = `mm:${mm}`;
-      if (used.has(key)) continue;
-      used.add(key);
-
-      qs.push({
-        promptLeft: `${mm}`,
-        unitLeft: `mm`,
-        unitRight: `cm`,
-        ans: String(cm)
-      });
+    // 数字
+    ctx.save();
+    ctx.fillStyle = cssVal('--number-color', '#111');
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `bold ${Math.max(12, r * 0.14)}px ${cssVal('--font-family', 'system-ui, sans-serif')}`;
+    const numRadius = r * 0.68;
+    for (let n = 1; n <= 12; n++) {
+      const angle = TAU * (n / 12) - Math.PI / 2;
+      const x = cx + numRadius * Math.cos(angle);
+      const y = cy + numRadius * Math.sin(angle);
+      ctx.fillText(String(n), x, y);
     }
+    ctx.restore();
+  }
+  function drawHand(cx, cy, r, angleRad, lenRatio, widthPx, color, tailRatio) {
+    const L = r * lenRatio, T = r * tailRatio;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(angleRad);
+    ctx.beginPath();
+    ctx.moveTo(-T, 0);
+    ctx.lineTo(L, 0);
+    ctx.strokeStyle = color;
+    ctx.lineWidth = widthPx;
+    ctx.lineCap = 'round';
+    ctx.shadowColor = 'rgba(0,0,0,0.25)';
+    ctx.shadowBlur = Math.max(4, widthPx * 0.6);
+    ctx.shadowOffsetY = 0.5;
+    ctx.stroke();
+    ctx.restore();
+  }
+  function drawCenterCap(cx, cy, r) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, Math.max(3, r * 0.045), 0, TAU);
+    ctx.fillStyle = cssVal('--center-cap-color', '#111');
+    ctx.fill();
+    ctx.restore();
+  }
 
-    shuffle(qs);
+  function draw() {
+    const { cx, cy, r, w, h } = centerAndRadius();
 
-    // DOMに描画
-    tbody.innerHTML = "";
-    qs.forEach((q, idx) => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td>
-          <div class="q">
-            <b>${idx + 1}.</b>
-            <span>${q.promptLeft}</span><span class="unit">${q.unitLeft}</span>
-            <span>＝</span>
-            <input class="answer" data-ans="${q.ans}" inputmode="numeric" />
-            <span class="unit">${q.unitRight}</span>
-          </div>
-        </td>
-        <td class="mark" data-mark></td>
-      `;
-      tbody.appendChild(tr);
-    });
+    // alpha:false → 毎回全面塗りで黒残りなし
+    ctx.fillStyle = cssVal('--face-bg', '#fafafa');
+    ctx.fillRect(0, 0, w, h);
 
-    inputs = Array.from(app.querySelectorAll('input.answer[data-ans]'));
+    // 盤面・針・キャップ
+    drawFace(cx, cy, r);
+    const hourColor   = cssVal('--hour-hand-color', '#e53935');
+    const minuteColor = cssVal('--minute-hand-color', '#1e63ff');
+    const hourW   = cssNum('--hour-hand-width', 16);
+    const minuteW = cssNum('--minute-hand-width', 12);
+    const hourL   = cssNum('--hour-hand-length', 0.56);
+    const minuteL = cssNum('--minute-hand-length', 0.78);
+    const tailL   = cssNum('--tail-length', 0.14);
 
-    // Enterで次へ
-    inputs.forEach((inp, i) => {
-      inp.addEventListener('keydown', (ev) => {
-        if (ev.key === 'Enter') {
-          ev.preventDefault();
-          const next = inputs[i + 1];
-          if (next && !next.disabled) next.focus();
+    drawHand(cx, cy, r, hourAngleDraw(),   hourL,   hourW,   hourColor,   tailL);
+    drawHand(cx, cy, r, minuteAngleDraw(), minuteL, minuteW, minuteColor, tailL);
+    drawCenterCap(cx, cy, r);
+
+    // 右側 表示の同期（アニメ中は“現在アニメ角”から表示）
+    const [dispH, dispM] = currentDisplayHM();
+    if (state.showDigital) digitalPanel.textContent = formatDigital(dispH, dispM);
+    if (state.showKana)    kanaPanel.textContent    = formatKana(dispH, dispM);
+  }
+
+  // アニメ中は anim.* から、停止中は state から表示値を作る
+  function currentDisplayHM() {
+    if (anim.active && anim.minuteFloat != null && anim.hourFloat != null) {
+      let m = Math.round(anim.minuteFloat);
+      let h = Math.floor(anim.hourFloat) % 12;
+      if (m >= 60) { m = 0; h = (h + 1) % 12; }
+      return [h, m];
+    }
+    return [state.hour, state.minute];
+  }
+
+  // ====== ヒット判定（中心→先端；描画角で判定） ======
+  function handEndpointsForPick(hand) {
+    const { cx, cy, r } = centerAndRadius();
+    const ang = hand === 'hour' ? hourAngleDraw() : minuteAngleDraw();
+    const L = r * cssNum(hand === 'hour' ? '--hour-hand-length' : '--minute-hand-length',
+                         hand === 'hour' ? 0.56 : 0.78);
+    return { ax: cx, ay: cy, bx: cx + L * Math.cos(ang), by: cy + L * Math.sin(ang) };
+  }
+  function distancePointToSegment(px, py, ax, ay, bx, by) {
+    const vx = bx - ax, vy = by - ay;
+    const wx = px - ax, wy = py - ay;
+    const c1 = vx * wx + vy * wy;
+    const c2 = vx * vx + vy * vy;
+    const t = c2 > 0 ? Math.max(0, Math.min(1, c1 / c2)) : 0;
+    const projx = ax + t * vx, projy = ay + t * vy;
+    return Math.hypot(px - projx, py - projy);
+  }
+  function pickHand(px, py) {
+    const { r } = centerAndRadius();
+    const hourW   = cssNum('--hour-hand-width', 16);
+    const minuteW = cssNum('--minute-hand-width', 12);
+    const list = [];
+    if (!state.minuteLocked) {
+      const { ax, ay, bx, by } = handEndpointsForPick('minute');
+      const d = distancePointToSegment(px, py, ax, ay, bx, by);
+      const tol = (minuteW/2) + Math.max(6, r*0.02);
+      if (d <= tol) list.push({ hand:'minute', d });
+    }
+    if (!state.hourLocked) {
+      const { ax, ay, bx, by } = handEndpointsForPick('hour');
+      const d = distancePointToSegment(px, py, ax, ay, bx, by);
+      const tol = (hourW/2) + Math.max(6, r*0.02);
+      if (d <= tol) list.push({ hand:'hour', d });
+    }
+    if (!list.length) return null;
+    list.sort((a,b)=>a.d-b.d);
+    return list[0].hand;
+  }
+
+  // ====== ポインタ角（Clock角：12時=0） ======
+  function pointAngleFromCenter(px, py) {
+    const { cx, cy } = centerAndRadius();
+    const a = Math.atan2(py - cy, px - cx); // 右=0
+    return normTau(a - Math.PI/2);          // → 12時=0 (Clock角)
+  }
+
+  // ====== ドラッグ（アニメ中は無効） ======
+  function onPointerDown(e) {
+    if (anim.active) return; // アニメ中は操作無効
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+
+    const hand = pickHand(px, py);
+    if (!hand) return;
+
+    activeHand = hand;
+    dragging = true;
+    try { canvas.setPointerCapture(e.pointerId); } catch {}
+
+    grabAngle = pointAngleFromCenter(px, py);                 // Clock角
+    handAngle0 = (hand === 'minute') ? minuteAngleClock()     // Clock角
+                                     : hourAngleClock();
+    angleOffset = shortest(handAngle0 - grabAngle);           // Clock角同士
+    e.preventDefault();
+  }
+  function onPointerMove(e) {
+    if (!dragging || !activeHand || anim.active) return;
+    const rect = canvas.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    const py = e.clientY - rect.top;
+
+    const ang = pointAngleFromCenter(px, py);                 // Clock角
+    const targetClock = normTau(ang + angleOffset);           // Clock角
+
+    // Clock角 → 時/分（整数スナップ）
+    const minuteFromAngle = Math.round((targetClock / TAU) * 60) % 60;
+    const hourFromAngle   = Math.round((targetClock / TAU) * 12) % 12;
+
+    if (activeHand === 'minute') {
+      const prevM = state.minute;
+      const newM = minuteFromAngle;
+
+      if (!state.hourLocked) {
+        if (prevM >= 45 && newM <= 15) {        // 59→0
+          state.hour = (state.hour + 1) % 12;
+        } else if (prevM <= 15 && newM >= 45) { // 0→59
+          state.hour = (state.hour + 11) % 12;  // -1 mod 12
         }
-      });
-    });
+      }
+      state.minute = newM;
 
-    // 初期は入力OK
-    lockInputs(false);
+    } else if (activeHand === 'hour') {
+      state.hour = hourFromAngle % 12; // 分は維持
+    }
 
-    // 先頭にフォーカス
-    setTimeout(() => inputs[0]?.focus(), 50);
-  };
+    draw();
+    e.preventDefault();
+  }
+  function onPointerUp(e) {
+    dragging = false;
+    activeHand = null;
+    try { canvas.releasePointerCapture(e.pointerId); } catch {}
+    e.preventDefault();
+  }
 
-  const start = () => {
-    // スタート時に毎回問題を作る（＝毎回変わる）
-    buildQuestions();
-    // 入力を空に
-    inputs.forEach(i => i.value = "");
-    hideResult();
-    clearMarks();
-    lockInputs(false);
+  // Pointer Events
+  if (window.PointerEvent) {
+    canvas.addEventListener('pointerdown', onPointerDown);
+    canvas.addEventListener('pointermove', onPointerMove);
+    canvas.addEventListener('pointerup', onPointerUp);
+    canvas.addEventListener('pointercancel', onPointerUp);
+    canvas.addEventListener('pointerleave', (e)=>{ if (dragging) onPointerUp(e); });
+  } else {
+    // 簡易フォールバック
+    canvas.addEventListener('touchstart', (e) => {
+      const t = e.touches[0];
+      onPointerDown({ clientX:t.clientX, clientY:t.clientY, preventDefault:()=>{}, pointerId:0 });
+    }, { passive:false });
+    canvas.addEventListener('touchmove', (e) => {
+      const t = e.touches[0];
+      onPointerMove({ clientX:t.clientX, clientY:t.clientY, preventDefault:()=>{}, pointerId:0 });
+    }, { passive:false });
+    canvas.addEventListener('touchend', (e) => {
+      onPointerUp({ preventDefault:()=>{}, pointerId:0 });
+    }, { passive:false });
+  }
 
-    const sec = getModeSeconds();
-    endAt = Date.now() + sec * 1000;
+  // ====== ボタン／UI ======
+  function updateUI() {
+    // ロック
+    btnHourLock.classList.toggle('is-on', state.hourLocked);
+    btnHourLock.setAttribute('aria-pressed', String(state.hourLocked));
+    btnHourLock.textContent = state.hourLocked ? '🔒 短針ロック' : '🔓 短針ロック';
 
-    running = true;
-    startBtn.disabled = true;
-    stopBtn.disabled = false;
-    timerEl.classList.add('running');
+    btnMinuteLock.classList.toggle('is-on', state.minuteLocked);
+    btnMinuteLock.setAttribute('aria-pressed', String(state.minuteLocked));
+    btnMinuteLock.textContent = state.minuteLocked ? '🔒 長針ロック' : '🔓 長針ロック';
 
-    const update = () => {
-      const leftMs = endAt - Date.now();
-      const leftSec = Math.max(0, Math.ceil(leftMs / 1000));
-      setTimerText(leftSec);
-      if (leftMs <= 0) finish();
-    };
+    // デジタル
+    btnDigital.classList.toggle('is-on', state.showDigital);
+    btnDigital.setAttribute('aria-pressed', String(state.showDigital));
+    btnDigital.textContent = `デジタル表示：${state.showDigital ? 'ON' : 'OFF'}`;
+    digitalPanel.classList.toggle('is-visible', state.showDigital);
 
-    update();
-    tickId = setInterval(update, 100);
-  };
+    // 〇じ〇ふん
+    btnKana.classList.toggle('is-on', state.showKana);
+    btnKana.setAttribute('aria-pressed', String(state.showKana));
+    btnKana.textContent = `〇じ〇ふん表示：${state.showKana ? 'ON' : 'OFF'}`;
+    kanaPanel.classList.toggle('is-visible', state.showKana);
 
-  const resetAll = () => {
-    if (tickId) clearInterval(tickId);
-    tickId = null;
-    endAt = null;
-    running = false;
+    // はんチェック
+    chkHan.checked = state.useHan;
 
-    setTimerText(null);
-    timerEl.classList.remove('running');
-    startBtn.disabled = false;
-    stopBtn.disabled = true;
+    // 入力欄へ現在値（1–12／0–59）を反映
+    syncInputsFromState();
+  }
 
-    hideResult();
-    clearMarks();
-    buildQuestions(); // リセットでも問題を変える
-  };
+  // 1–12入力 → 内部 0–11 に変換（12 → 0）
+  function h12To0_11(h12) {
+    const v = Math.max(1, Math.min(12, Math.round(h12))); // 1..12 にクランプ
+    return (v % 12); // 12 -> 0
+  }
+  // 内部 0–11 → 表示用 1–12（0 → 12）
+  function h0_11ToDisplay(h0) {
+    const v = ((h0 % 12) + 12) % 12;
+    return v === 0 ? 12 : v;
+  }
 
-  // --- Buttons ---
-  document.getElementById('checkBtn').addEventListener('click', () => {
-    const stats = compute();
-    showResult(stats);
+  // 入力欄へ現在値を同期
+  function syncInputsFromState() {
+    inpHour.value   = h0_11ToDisplay(state.hour);
+    inpMinute.value = state.minute;
+  }
+
+  // 一瞬で設定（入力は 1–12／0–59）
+  function setTimeInstant(h12, m) {
+    const h = h12To0_11(h12);
+    const mm  = Math.max(0, Math.min(59, Math.round(m)));
+    state.hour = h;
+    state.minute = mm;
+    updateUI();
+    draw();
+  }
+
+  // 視認できる速度：差分（分）× 80ms、下限 0.8s、上限 6s
+  function calcDurationMs(deltaMinutes) {
+    const perMin = 80; // 80ms / 1分
+    return Math.max(800, Math.min(6000, deltaMinutes * perMin));
+  }
+
+  function setTimeAnimated(h12, m) {
+    const h = h12To0_11(h12);
+    const mm  = Math.max(0, Math.min(59, Math.round(m)));
+
+    // 現在と目標を「12時間＝720分」の周回上で比較（前方向で進める）
+    const start = (state.hour % 12) * 60 + state.minute; // 0..719
+    const end   = (h % 12) * 60 + mm;                    // 0..719
+    const deltaForward = (end - start + 720) % 720;      // 0..719
+    if (deltaForward === 0) { // 変化なし：一瞬で反映
+      setTimeInstant(h12, mm);
+      return;
+    }
+
+    anim.active   = true;
+    anim.startTotal = start;
+    anim.endTotal   = end;
+    anim.duration = calcDurationMs(deltaForward);
+    anim.startTs  = performance.now();
+    anim.hourFloat = null;
+    anim.minuteFloat = null;
+
+    function easeInOutQuad(t) { return t < 0.5 ? 2*t*t : 1 - Math.pow(-2*t + 2, 2)/2; }
+
+    function step(nowTs) {
+      if (!anim.active) return;
+      const t = Math.min(1, (nowTs - anim.startTs) / anim.duration);
+      const p = easeInOutQuad(t);
+      const curTotal = anim.startTotal + deltaForward * p; // 分単位の実数
+      const minuteFloat = curTotal % 60;
+      const hourFloat   = (curTotal / 60) % 12;
+
+      anim.minuteFloat = minuteFloat;
+      anim.hourFloat   = hourFloat;
+
+      // 描画
+      draw();
+
+      // パネルも随時更新
+      if (state.showDigital || state.showKana) {
+        let mDisp = Math.round(minuteFloat);
+        let hDisp = Math.floor(hourFloat) % 12;
+        if (mDisp >= 60) { mDisp = 0; hDisp = (hDisp + 1) % 12; }
+        if (state.showDigital) digitalPanel.textContent = formatDigital(hDisp, mDisp);
+        if (state.showKana)    kanaPanel.textContent    = formatKana(hDisp, mDisp);
+      }
+
+      if (t < 1) {
+        requestAnimationFrame(step);
+      } else {
+        // 完了：内部状態を確定、アニメ解除
+        anim.active = false;
+        anim.minuteFloat = null;
+        anim.hourFloat   = null;
+        state.hour = h;
+        state.minute = mm;
+        updateUI();
+        draw();
+      }
+    }
+    requestAnimationFrame(step);
+  }
+
+  // ====== 入力欄のキーバインド ======
+  // Enter → アニメで設定 ／ Shift+Enter → 一瞬で設定
+  inpHour.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      if (e.shiftKey) btnSetInstant.click();   // Shift+Enter → 一瞬
+      else btnSetAnimated.click();             // Enter → アニメ
+    }
+  });
+  inpMinute.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      if (e.shiftKey) btnSetInstant.click();   // Shift+Enter → 一瞬
+      else btnSetAnimated.click();             // Enter → アニメ
+    }
   });
 
-  document.getElementById('resetBtn').addEventListener('click', resetAll);
-  startBtn.addEventListener('click', start);
-  stopBtn.addEventListener('click', finish);
-  newBtn.addEventListener('click', buildQuestions);
+  // ====== 各ボタン ======
+  btnHourLock.addEventListener('click', ()=>{ state.hourLocked   = !state.hourLocked;   updateUI(); draw(); });
+  btnMinuteLock.addEventListener('click', ()=>{ state.minuteLocked = !state.minuteLocked; updateUI(); draw(); });
+  btnDigital  .addEventListener('click', ()=>{ state.showDigital  = !state.showDigital;  updateUI(); draw(); });
+  btnKana     .addEventListener('click', ()=>{ state.showKana     = !state.showKana;     updateUI(); draw(); });
 
-  // 初期：最初から問題を1回作っておく（開いた時点でも変わる）
-  buildQuestions();
-  setTimerText(null);
+  btnSetInstant.addEventListener('click', () => {
+    const h = Number(inpHour.value);
+    const m = Number(inpMinute.value);
+    setTimeInstant(h, m);
+  });
+  btnSetAnimated.addEventListener('click', () => {
+    const h = Number(inpHour.value);
+    const m = Number(inpMinute.value);
+    setTimeAnimated(h, m);
+  });
+
+  // はんチェック
+  chkHan.addEventListener('change', () => {
+    state.useHan = chkHan.checked;
+    // 表示更新（ON時）
+    if (state.showKana) {
+      const [h, m] = currentDisplayHM();
+      kanaPanel.textContent = formatKana(h, m);
+    }
+  });
+
+  // 初期レンダリング
+  function init() {
+    updateUI();
+    draw();
+  }
+  requestAnimationFrame(init);
 })();
 </script>
 </body>
